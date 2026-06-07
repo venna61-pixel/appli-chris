@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Lecteur audio web avec playlist, modes aléatoire, boucle et silence entre les pistes." />
+
+  <!-- Sécurité : Content Security Policy -->
+  <!-- Autorise uniquement : scripts inline (nos modules), fonts Google, styles inline -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 script-src 'self';
+                 style-src 'self' https://fonts.googleapis.com;
+                 font-src https://fonts.gstatic.com;
+                 media-src 'self' blob:;
+                 img-src 'self' data:;
+                 connect-src 'self';" />
+
+  <title>Lecteur Audio</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <div class="app-wrapper" role="main">
+
+    <!-- ── En-tête ──────────────────────────────────────────────────────── -->
+    <header class="app-header">
+      <h1>Lecteur Audio</h1>
+      <p>Playlist · Aléatoire · Silence</p>
+    </header>
+
+    <!-- ── Zone d'ajout de fichiers ─────────────────────────────────────── -->
+    <input type="file" id="file-input"
+           accept=".mp3,.ogg,.wav,.flac,.aac,.m4a" multiple hidden />
+
+    <div id="drop-zone" class="drop-zone" role="region" aria-label="Ajouter des chansons">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <path d="M9 18V5l12-2v13"/>
+        <circle cx="6" cy="18" r="3"/>
+        <circle cx="18" cy="16" r="3"/>
+      </svg>
+      <p class="drop-zone-title">Glissez vos chansons ici</p>
+      <p class="drop-zone-or">ou</p>
+      <button id="btn-add-files" class="btn-browse">Choisir des fichiers</button>
+      <p class="drop-zone-formats">MP3 · WAV · FLAC · OGG · AAC · M4A</p>
+    </div>
+
+    <!-- ── Bannière d'erreur (masquée par défaut) ────────────────────────── -->
+    <div id="error-banner" class="error-banner" role="alert" aria-live="assertive" hidden>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="8" x2="12" y2="12"/>
+        <line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+      <span id="error-message"></span>
+      <button id="error-dismiss" aria-label="Fermer l'erreur">✕</button>
+    </div>
+
+    <!-- ── Overlay silence (masqué par défaut) ───────────────────────────── -->
+    <div id="silence-overlay" class="silence-overlay" role="status"
+         aria-live="polite" aria-label="Silence en cours" hidden>
+      <span class="silence-label">Silence</span>
+      <span id="silence-countdown" aria-live="off">—</span>
+      <div class="silence-bar-track" aria-hidden="true">
+        <div id="silence-fill"></div>
+      </div>
+    </div>
+
+    <!-- ── Carte lecteur ─────────────────────────────────────────────────── -->
+    <section class="player-card" aria-label="Lecteur audio">
+
+      <!-- Infos piste -->
+      <div class="track-info" aria-live="polite" aria-atomic="true">
+        <span id="track-title" aria-label="Titre de la piste">—</span>
+        <span id="track-artist" aria-label="Artiste"></span>
+      </div>
+
+      <!-- Barre de progression -->
+      <div class="progress-area">
+        <div id="progress-bar"
+             role="slider"
+             aria-label="Progression de la piste"
+             aria-valuemin="0"
+             aria-valuemax="100"
+             aria-valuenow="0"
+             tabindex="0">
+          <div id="progress-fill"  aria-hidden="true"></div>
+          <div id="progress-thumb" aria-hidden="true"></div>
+        </div>
+        <div class="time-display" aria-hidden="true">
+          <span id="time-current">0:00</span>
+          <span id="time-duration">0:00</span>
+        </div>
+      </div>
+
+      <!-- Contrôles principaux -->
+      <div class="controls-main" role="group" aria-label="Contrôles de lecture">
+        <button id="btn-prev" class="btn-icon" aria-label="Piste précédente">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <polygon points="19,20 9,12 19,4"/>
+            <rect x="5" y="4" width="2" height="16"/>
+          </svg>
+        </button>
+
+        <button id="btn-play" class="btn-icon" aria-label="Lecture">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <polygon points="5,3 19,12 5,21"/>
+          </svg>
+        </button>
+
+        <button id="btn-next" class="btn-icon" aria-label="Piste suivante">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <polygon points="5,4 15,12 5,20"/>
+            <rect x="17" y="4" width="2" height="16"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Volume -->
+      <div class="volume-area">
+        <svg class="volume-icon" width="16" height="16" viewBox="0 0 24 24"
+             fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <polygon points="11,5 6,9 2,9 2,15 6,15 11,19"/>
+          <path d="M15.54,8.46a5,5,0,0,1,0,7.07"/>
+          <path d="M19.07,4.93a10,10,0,0,1,0,14.14"/>
+        </svg>
+        <input id="volume-slider"
+               type="range"
+               min="0" max="100" value="80"
+               aria-label="Volume" />
+      </div>
+
+      <!-- Modes de lecture -->
+      <div class="controls-modes" role="group" aria-label="Modes de lecture">
+
+        <button id="btn-shuffle" class="btn-mode"
+                aria-pressed="false" aria-label="Mode aléatoire">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" aria-hidden="true">
+            <polyline points="16,3 21,3 21,8"/>
+            <line x1="4" y1="20" x2="21" y2="3"/>
+            <polyline points="21,16 21,21 16,21"/>
+            <line x1="15" y1="15" x2="21" y2="21"/>
+          </svg>
+          Aléatoire
+        </button>
+
+        <button id="btn-loop" class="btn-mode"
+                aria-pressed="false" aria-label="Mode boucle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" aria-hidden="true">
+            <polyline points="17,1 21,5 17,9"/>
+            <path d="M3,11V9a4,4,0,0,1,4-4h14"/>
+            <polyline points="7,23 3,19 7,15"/>
+            <path d="M21,13v2a4,4,0,0,1-4,4H3"/>
+          </svg>
+          Boucle
+        </button>
+
+        <select id="silence-select" aria-label="Durée du silence entre les pistes">
+          <option value="off">Silence : désactivé</option>
+          <option value="short">Silence : 60 s</option>
+          <option value="long">Silence : 120 s</option>
+          <option value="auto">Silence : automatique</option>
+        </select>
+
+      </div>
+    </section>
+
+    <!-- ── Playlist ──────────────────────────────────────────────────────── -->
+    <section class="playlist-card" aria-label="Playlist">
+      <div class="playlist-header">
+        Playlist
+        <button id="btn-add-more" class="btn-add-more" aria-label="Changer de chansons"
+                title="Changer de chansons" hidden>↺ Changer</button>
+      </div>
+      <ul id="playlist" role="listbox" aria-label="Pistes audio">
+        <li id="playlist-empty" style="padding:1rem 1.25rem;color:var(--text-lo);font-size:.85rem;">
+          Ajoutez des chansons ci-dessus pour commencer.
+        </li>
+      </ul>
+    </section>
+
+    <footer class="app-footer">
+      <p>Espace · Lecture/Pause &nbsp;|&nbsp; ← → · Piste précédente/suivante</p>
+    </footer>
+
+  </div><!-- /.app-wrapper -->
+
+  <!-- ── Scripts (ordre important : config → utils → playlist → silence → player → ui) -->
+  <script src="js/config.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/playlist.js"></script>
+  <script src="js/silence.js"></script>
+  <script src="js/player.js"></script>
+  <script src="js/ui.js"></script>
+  <script>
+    // Point d'entrée unique — démarrage de l'application
+    document.addEventListener('DOMContentLoaded', () => UI.init());
+  </script>
+
+</body>
+</html>

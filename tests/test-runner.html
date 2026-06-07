@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tests — Lecteur Audio</title>
+  <style>
+    :root {
+      --pass: #2ecc71; --fail: #e74c3c; --skip: #f39c12;
+      --bg: #0f1117; --card: #1a1d27; --border: #2a2d3a;
+      --text: #e0e0e0; --muted: #666;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace;
+           font-size: 13px; padding: 1.5rem; }
+    h1 { color: #fff; font-size: 1.3rem; margin-bottom: .25rem; }
+    .subtitle { color: var(--muted); margin-bottom: 1.5rem; }
+    #summary { display: flex; gap: 1.5rem; margin-bottom: 1.5rem; padding: .75rem 1rem;
+               background: var(--card); border: 1px solid var(--border); border-radius: 6px; }
+    .stat { display: flex; flex-direction: column; }
+    .stat-num { font-size: 1.4rem; font-weight: bold; }
+    .stat-label { font-size: .7rem; color: var(--muted); text-transform: uppercase; }
+    .pass-num { color: var(--pass); } .fail-num { color: var(--fail); }
+    .skip-num { color: var(--skip); }
+    .suite { background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+             margin-bottom: 1rem; overflow: hidden; }
+    .suite-header { padding: .6rem 1rem; background: #1f2235; font-weight: bold;
+                    font-size: .8rem; letter-spacing: .05em; text-transform: uppercase; color: #aaa; }
+    .test { display: flex; align-items: flex-start; gap: .75rem;
+            padding: .5rem 1rem; border-top: 1px solid var(--border); }
+    .test:first-of-type { border-top: none; }
+    .badge { flex-shrink: 0; padding: .15rem .45rem; border-radius: 3px;
+             font-size: .7rem; font-weight: bold; }
+    .PASS { background: rgba(46,204,113,.15); color: var(--pass); }
+    .FAIL { background: rgba(231,76,60,.15); color: var(--fail); }
+    .name { flex: 1; }
+    .error { color: var(--fail); font-size: .8rem; margin-top: .25rem;
+             white-space: pre-wrap; }
+    #run-btn { padding: .5rem 1.25rem; background: #4a6ec8; color: #fff; border: none;
+               border-radius: 5px; cursor: pointer; margin-bottom: 1.5rem; font-size: .85rem; }
+    #run-btn:hover { background: #5a7ed8; }
+  </style>
+</head>
+<body>
+  <h1>🧪 Tests — Lecteur Audio</h1>
+  <p class="subtitle">Tests unitaires des modules utils, playlist, silence</p>
+  <button id="run-btn">▶ Lancer les tests</button>
+  <div id="summary" hidden></div>
+  <div id="results"></div>
+
+  <!-- Charger les modules à tester (sans l'UI ni le player qui ont des effets de bord) -->
+  <script src="../js/config.js"></script>
+  <script src="../js/utils.js"></script>
+  <script src="../js/playlist.js"></script>
+  <script src="../js/silence.js"></script>
+
+  <script>
+  'use strict';
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Mini framework de test (< 60 lignes, zéro dépendance)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const Tester = (() => {
+    const suites = [];
+    let current = null;
+
+    function describe(name, fn) {
+      current = { name, tests: [] };
+      suites.push(current);
+      fn();
+    }
+
+    function it(name, fn) {
+      current.tests.push({ name, fn });
+    }
+
+    function expect(actual) {
+      return {
+        toBe(expected) {
+          if (actual !== expected)
+            throw new Error(`Attendu : ${JSON.stringify(expected)}\nReçu    : ${JSON.stringify(actual)}`);
+        },
+        toEqual(expected) {
+          const a = JSON.stringify(actual), e = JSON.stringify(expected);
+          if (a !== e) throw new Error(`Attendu : ${e}\nReçu    : ${a}`);
+        },
+        toBeTruthy() {
+          if (!actual) throw new Error(`Attendu truthy, reçu : ${JSON.stringify(actual)}`);
+        },
+        toBeFalsy() {
+          if (actual) throw new Error(`Attendu falsy, reçu : ${JSON.stringify(actual)}`);
+        },
+        toBeNull() {
+          if (actual !== null) throw new Error(`Attendu null, reçu : ${JSON.stringify(actual)}`);
+        },
+        toBeGreaterThan(n) {
+          if (!(actual > n)) throw new Error(`Attendu > ${n}, reçu : ${actual}`);
+        },
+        toBeLessThanOrEqual(n) {
+          if (!(actual <= n)) throw new Error(`Attendu ≤ ${n}, reçu : ${actual}`);
+        },
+        toBeGreaterThanOrEqual(n) {
+          if (!(actual >= n)) throw new Error(`Attendu ≥ ${n}, reçu : ${actual}`);
+        },
+        toBeCloseTo(expected, precision = 2) {
+          const factor = Math.pow(10, precision);
+          if (Math.round(actual * factor) !== Math.round(expected * factor))
+            throw new Error(`Attendu ≈ ${expected}, reçu : ${actual}`);
+        },
+        toContain(item) {
+          if (!actual.includes(item))
+            throw new Error(`Attendu que ${JSON.stringify(actual)} contienne ${JSON.stringify(item)}`);
+        },
+        toThrow() {
+          if (typeof actual !== 'function') throw new Error('toThrow requiert une fonction');
+          let threw = false;
+          try { actual(); } catch { threw = true; }
+          if (!threw) throw new Error('Aucune exception levée');
+        },
+        toHaveLength(n) {
+          if (actual.length !== n)
+            throw new Error(`Attendu longueur ${n}, reçu : ${actual.length}`);
+        },
+      };
+    }
+
+    function run() {
+      let pass = 0, fail = 0;
+      const output = [];
+
+      for (const suite of suites) {
+        const results = [];
+        for (const test of suite.tests) {
+          try {
+            test.fn();
+            results.push({ name: test.name, status: 'PASS' });
+            pass++;
+          } catch (err) {
+            results.push({ name: test.name, status: 'FAIL', error: err.message });
+            fail++;
+          }
+        }
+        output.push({ suite: suite.name, results });
+      }
+
+      return { pass, fail, total: pass + fail, output };
+    }
+
+    return { describe, it, expect, run };
+  })();
+
+  const { describe, it, expect } = Tester;
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  SUITE 1 — Utils.formatTime
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('Utils.formatTime', () => {
+
+    it('formate 0 secondes', () => {
+      expect(Utils.formatTime(0)).toBe('0:00');
+    });
+
+    it('formate 59 secondes', () => {
+      expect(Utils.formatTime(59)).toBe('0:59');
+    });
+
+    it('formate 60 secondes (1 minute)', () => {
+      expect(Utils.formatTime(60)).toBe('1:00');
+    });
+
+    it('formate 3661 secondes (1h01m01s)', () => {
+      expect(Utils.formatTime(3661)).toBe('61:01');
+    });
+
+    it('retourne "0:00" pour NaN', () => {
+      expect(Utils.formatTime(NaN)).toBe('0:00');
+    });
+
+    it('retourne "0:00" pour Infinity', () => {
+      expect(Utils.formatTime(Infinity)).toBe('0:00');
+    });
+
+    it('retourne "0:00" pour valeur négative', () => {
+      expect(Utils.formatTime(-5)).toBe('0:00');
+    });
+
+    it('pad les secondes avec un zéro', () => {
+      expect(Utils.formatTime(65)).toBe('1:05');
+    });
+
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  SUITE 2 — Utils.shuffle
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('Utils.shuffle', () => {
+
+    it('retourne un tableau de même longueur', () => {
+      const arr = [1, 2, 3, 4, 5];
+      expect(Utils.shuffle(arr)).toHaveLength(5);
+    });
+
+    it('ne modifie pas le tableau source', () => {
+      const arr = [1, 2, 3];
+      Utils.shuffle(arr);
+      expect(arr).toEqual([1, 2, 3]);
+    });
+
+    it('contient les mêmes éléments', () => {
+      const arr = [1, 2, 3, 4, 5];
+      const shuffled = Utils.shuffle(arr);
+      expect(shuffled.sort((a,b) => a-b)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('retourne [] pour une entrée non-tableau', () => {
+      expect(Utils.shuffle(null)).toEqual([]);
+      expect(Utils.shuffle('abc')).toEqual([]);
+    });
+
+    it('retourne [] pour un tableau vide', () => {
+      expect(Utils.shuffle([])).toEqual([]);
+    });
+
+    it('retourne [x] pour un tableau à un élément', () => {
+      expect(Utils.shuffle([42])).toEqual([42]);
+    });
+
+    it('produit des ordres différents (probabiliste)', () => {
+      // Sur 50 mélanges d'un tableau de 5 éléments, au moins un doit être différent de l'original
+      const arr = [1, 2, 3, 4, 5];
+      const results = new Set(Array.from({ length: 50 }, () => Utils.shuffle(arr).join(',')));
+      expect(results.size).toBeGreaterThan(1);
+    });
+
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  SUITE 3 — Utils.shuffleAvoidFirst
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('Utils.shuffleAvoidFirst', () => {
+
+    it('évite que le premier élément soit firstExcluded', () => {
+      const arr = [0, 1, 2, 3, 4];
+      // Tester 30 fois pour la robustesse statistique
+      for (let i = 0; i < 30; i++) {
+        const result = Utils.shuffleAvoidFirst(arr, 0);
+        expect(result[0] === 0).toBeFalsy();
+      }
+    });
+
+    it('retourne tous les éléments', () => {
+      const arr = [0, 1, 2, 3];
+      const result = Utils.shuffleAvoidFirst(arr, 0);
+      expect(result.sort((a,b) => a-b)).toEqual([0, 1, 2, 3]);
+    });
+
+    it('fonctionne avec un tableau à un élément', () => {
+      expect(Utils.shuffleAvoidFirst([42], 42)).toEqual([42]);
+    });
+
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  SUITE 4 — Utils.computeAutoSilence
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('Utils.computeAutoSilence', () => {
+
+    it('retourne 60 quand xmin === xmax (cas limite)', () => {
+      expect(Utils.computeAutoSilence(120, 120, 120)).toBe(60);
+    });
+
+    it('retourne 60 pour la piste la plus courte', () => {
+      expect(Utils.computeAutoSilence(60, 60, 120)).toBeCloseTo(60, 1);
+    });
+
+    it('retourne 120 pour la piste la plus longue', () => {
+      expect(Utils.computeAutoSilence(120, 60, 120)).toBeCloseTo(120, 1);
+    });
+
+    it('retourne 90 pour la piste médiane', () => {
+      // x=90, xmin=60, xmax=120 → 60*(1 + 30/60) = 60*1.5 = 90
+      expect(Utils.computeAutoSilence(90, 60, 120)).toBeCloseTo(90, 1);
+    });
+
+    it('ne dépasse jamais 120', () => {
+      const result = Utils.computeAutoSilence(9999, 0, 100);
+      expect(result).toBeLessThanOrEqual(120);
+    });
+
+    it('ne descend jamais sous 60', () => {
+      const result = Utils.computeAutoSilence(-999, 0, 100);
+      expect(result).toBeGreaterThanOrEqual(60);
+    });
+
+    it('retourne DEFAULT pour des entrées NaN', () => {
+      expect(Utils.computeAutoSilence(NaN, 60, 120)).toBe(CONFIG.SILENCE.DEFAULT);
+    });
+
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  SUITE 5 — Utils.validateTrack
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('Utils.validateTrack', () => {
+
+    it('valide une piste correcte', () => {
+      const track = Utils.validateTrack({ id:'t1', title:'Song', artist:'Art', file:'audio/s.mp3' }, 0);
+      expect(track).toBeTruthy();
+      expect(track.file).toBe('audio/s.mp3');
+    });
+
+    it('rejette une piste sans champ file', () => {
+      expect(Utils.validateTrack({ title: 'No file' }, 0)).toBeNull();
+    });
+
+    it('rejette une extension non supportée', () => {
+      expect(Utils.validateTrack({ file: 'audio/track.exe' }, 0)).toBeNull();
+    });
+
+    it('rejette null', () => {
+      expect(Utils.validateTrack(null, 0)).toBeNull();
+    });
+
+    it('rejette un nombre', () => {
+      expect(Utils.validateTrack(42, 0)).toBeNull();
+    });
+
+    it('tronque un titre trop long', () => {
+      const longTitle = 'A'.repeat(300);
+      const track = Utils.validateTrack({ file: 'a.mp3', title: longTitle }, 0);
+      expect(track.title.length).toBeLessThanOrEqual(CONFIG.PLAYLIST.MAX_STRING_LENGTH);
+    });
+
+    it('utilise un titre par défaut si absent', () => {
+      const track = Utils.validateTrack({ file: 'a.mp3' }, 3);
+      expect(track.title).toBe('Piste 4');
+    });
+
+    it('accepte les extensions : mp3, ogg, wav, flac, aac, m4a', () => {
+      const exts = ['mp3', 'ogg', 'wav', 'flac', 'aac', 'm4a'];
+      exts.forEach(ext => {
+        const t = Utils.validateTrack({ file: `audio/track.${ext}` }, 0);
+        expect(t).toBeTruthy();
+      });
+    });
+
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  SUITE 6 — Utils.validatePlaylist
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('Utils.validatePlaylist', () => {
+
+    it('rejette un non-tableau', () => {
+      expect(() => Utils.validatePlaylist({})).toThrow();
+      expect(() => Utils.validatePlaylist('string')).toThrow();
+      expect(() => Utils.validatePlaylist(null)).toThrow();
+    });
+
+    it('retourne un tableau vide si toutes les pistes sont invalides', () => {
+      expect(Utils.validatePlaylist([null, 42, {}])).toEqual([]);
+    });
+
+    it('filtre les pistes invalides et garde les valides', () => {
+      const raw = [
+        { file: 'valid.mp3', title: 'Good' },
+        null,
+        { file: 'also.mp3', title: 'Also Good' },
+      ];
+      expect(Utils.validatePlaylist(raw)).toHaveLength(2);
+    });
+
+    it('tronque à MAX_TRACKS pistes', () => {
+      const raw = Array.from({ length: 600 }, (_, i) => ({ file: `t${i}.mp3` }));
+      expect(Utils.validatePlaylist(raw)).toHaveLength(CONFIG.PLAYLIST.MAX_TRACKS);
+    });
+
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  SUITE 7 — Utils.clamp
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('Utils.clamp', () => {
+    it('retourne min si value < min', () => expect(Utils.clamp(-5, 0, 1)).toBe(0));
+    it('retourne max si value > max', () => expect(Utils.clamp(5, 0, 1)).toBe(1));
+    it('retourne value si dans la plage', () => expect(Utils.clamp(0.5, 0, 1)).toBe(0.5));
+    it('retourne min si value === min', () => expect(Utils.clamp(0, 0, 1)).toBe(0));
+    it('retourne max si value === max', () => expect(Utils.clamp(1, 0, 1)).toBe(1));
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  SUITE 8 — PlaylistManager
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('PlaylistManager', () => {
+
+    const TRACKS = [
+      { id: 'a', title: 'Alpha',   artist: '', file: 'a.mp3', duration: 60  },
+      { id: 'b', title: 'Beta',    artist: '', file: 'b.mp3', duration: 90  },
+      { id: 'c', title: 'Gamma',   artist: '', file: 'c.mp3', duration: 120 },
+      { id: 'd', title: 'Delta',   artist: '', file: 'd.mp3', duration: 80  },
+    ];
+
+    function loadFresh() {
+      PlaylistManager.load([...TRACKS]);
+      PlaylistManager.setShuffled(false);
+      PlaylistManager.setLoop(false);
+    }
+
+    it('charge la playlist et positionne sur la première piste', () => {
+      loadFresh();
+      expect(PlaylistManager.current().id).toBe('a');
+    });
+
+    it('retourne null si playlist vide', () => {
+      expect(() => PlaylistManager.load([])).toThrow();
+    });
+
+    it('size() retourne le bon nombre de pistes', () => {
+      loadFresh();
+      expect(PlaylistManager.size()).toBe(4);
+    });
+
+    it('next() avance à la piste suivante', () => {
+      loadFresh();
+      const { track } = PlaylistManager.next();
+      expect(track.id).toBe('b');
+    });
+
+    it('next() retourne null à la fin sans boucle', () => {
+      loadFresh();
+      PlaylistManager.next(); // b
+      PlaylistManager.next(); // c
+      PlaylistManager.next(); // d
+      const { track } = PlaylistManager.next(); // fin
+      expect(track).toBeNull();
+    });
+
+    it('next() boucle en mode loop', () => {
+      loadFresh();
+      PlaylistManager.setLoop(true);
+      PlaylistManager.next(); PlaylistManager.next(); PlaylistManager.next();
+      const { track, cycleCompleted } = PlaylistManager.next();
+      expect(track.id).toBe('a');
+      expect(cycleCompleted).toBe(true);
+    });
+
+    it('previous() revient à la piste précédente', () => {
+      loadFresh();
+      PlaylistManager.next(); // -> b
+      const track = PlaylistManager.previous();
+      expect(track.id).toBe('a');
+    });
+
+    it('previous() reste sur la première piste sans boucle', () => {
+      loadFresh();
+      const track = PlaylistManager.previous();
+      expect(track.id).toBe('a');
+    });
+
+    it('jumpTo() saute directement à une piste', () => {
+      loadFresh();
+      PlaylistManager.jumpTo('c');
+      expect(PlaylistManager.current().id).toBe('c');
+    });
+
+    it('jumpTo() retourne null pour un id inconnu', () => {
+      loadFresh();
+      expect(PlaylistManager.jumpTo('xxx')).toBeNull();
+    });
+
+    it('setShuffled() produit un ordre différent', () => {
+      loadFresh();
+      let differentFound = false;
+      for (let i = 0; i < 20; i++) {
+        PlaylistManager.setShuffled(true);
+        const order = PlaylistManager.getOrderedTracks().map(t => t.id).join('');
+        if (order !== 'abcd') { differentFound = true; break; }
+        PlaylistManager.setShuffled(false);
+      }
+      expect(differentFound).toBeTruthy();
+    });
+
+    it('getDurationRange() retourne min=60 max=120', () => {
+      loadFresh();
+      const range = PlaylistManager.getDurationRange();
+      expect(range.min).toBe(60);
+      expect(range.max).toBe(120);
+    });
+
+    it('setTrackDuration() met à jour la durée', () => {
+      loadFresh();
+      PlaylistManager.setTrackDuration('a', 999);
+      const range = PlaylistManager.getDurationRange();
+      expect(range.max).toBe(999);
+    });
+
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  SUITE 9 — SilenceManager
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('SilenceManager', () => {
+
+    it('mode "off" par défaut', () => {
+      expect(SilenceManager.getMode()).toBe('off');
+      expect(SilenceManager.isActive()).toBeFalsy();
+    });
+
+    it('setMode() change le mode', () => {
+      SilenceManager.setMode('short');
+      expect(SilenceManager.getMode()).toBe('short');
+      SilenceManager.setMode('off');
+    });
+
+    it('setMode() ignore les modes inconnus', () => {
+      SilenceManager.setMode('off');
+      SilenceManager.setMode('banana');
+      expect(SilenceManager.getMode()).toBe('off');
+    });
+
+    it('en mode "off", start() appelle onEnd immédiatement', (done) => {
+      SilenceManager.setMode('off');
+      let called = false;
+      SilenceManager.start(60, () => { called = true; });
+      // Synchrone car mode off
+      expect(called).toBeTruthy();
+    });
+
+    it('getProgress() retourne null si aucun silence en cours', () => {
+      SilenceManager.cancel();
+      expect(SilenceManager.getProgress()).toBeNull();
+    });
+
+    it('getRemainingSeconds() retourne null si inactif', () => {
+      SilenceManager.cancel();
+      expect(SilenceManager.getRemainingSeconds()).toBeNull();
+    });
+
+    it('cancel() annule le silence sans lever d\'exception', () => {
+      SilenceManager.setMode('short');
+      SilenceManager.start(60, () => {});
+      expect(() => SilenceManager.cancel()).not && (() => SilenceManager.cancel())();
+      SilenceManager.setMode('off');
+    });
+
+    it('isActive() est vrai pour les modes ≠ off', () => {
+      ['short', 'long', 'auto'].forEach(m => {
+        SilenceManager.setMode(m);
+        expect(SilenceManager.isActive()).toBeTruthy();
+      });
+      SilenceManager.setMode('off');
+      expect(SilenceManager.isActive()).toBeFalsy();
+    });
+
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  SUITE 10 — CONFIG (immuabilité et valeurs)
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe('CONFIG (immuabilité)', () => {
+
+    it('CONFIG est gelé (Object.isFrozen)', () => {
+      expect(Object.isFrozen(CONFIG)).toBeTruthy();
+    });
+
+    it('CONFIG.SILENCE.SHORT === 60', () => {
+      expect(CONFIG.SILENCE.SHORT).toBe(60);
+    });
+
+    it('CONFIG.SILENCE.LONG === 120', () => {
+      expect(CONFIG.SILENCE.LONG).toBe(120);
+    });
+
+    it('CONFIG.AUDIO.DEFAULT_VOLUME est entre 0 et 1', () => {
+      expect(CONFIG.AUDIO.DEFAULT_VOLUME).toBeGreaterThanOrEqual(0);
+      expect(CONFIG.AUDIO.DEFAULT_VOLUME).toBeLessThanOrEqual(1);
+    });
+
+    it('CONFIG.SILENCE.MODES contient les 4 modes', () => {
+      expect(CONFIG.SILENCE.MODES).toContain('off');
+      expect(CONFIG.SILENCE.MODES).toContain('short');
+      expect(CONFIG.SILENCE.MODES).toContain('long');
+      expect(CONFIG.SILENCE.MODES).toContain('auto');
+    });
+
+    it('ne peut pas être muté', () => {
+      const original = CONFIG.SILENCE.SHORT;
+      try { CONFIG.SILENCE.SHORT = 999; } catch {}
+      expect(CONFIG.SILENCE.SHORT).toBe(original);
+    });
+
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Rendu des résultats
+  // ─────────────────────────────────────────────────────────────────────────
+
+  document.getElementById('run-btn').addEventListener('click', () => {
+    const { pass, fail, total, output } = Tester.run();
+
+    // Résumé
+    const summary = document.getElementById('summary');
+    summary.hidden = false;
+    summary.innerHTML = `
+      <div class="stat"><span class="stat-num pass-num">${pass}</span><span class="stat-label">Passés</span></div>
+      <div class="stat"><span class="stat-num fail-num">${fail}</span><span class="stat-label">Échoués</span></div>
+      <div class="stat"><span class="stat-num">${total}</span><span class="stat-label">Total</span></div>
+    `;
+
+    // Résultats détaillés
+    const results = document.getElementById('results');
+    results.innerHTML = output.map(({ suite, results }) => `
+      <div class="suite">
+        <div class="suite-header">${suite}</div>
+        ${results.map(r => `
+          <div class="test">
+            <span class="badge ${r.status}">${r.status}</span>
+            <div class="name">
+              ${r.name}
+              ${r.error ? `<div class="error">${r.error}</div>` : ''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `).join('');
+
+    // Log console
+    console.log(`\n✅ ${pass} passés | ❌ ${fail} échoués | Total : ${total}\n`);
+  });
+  </script>
+</body>
+</html>

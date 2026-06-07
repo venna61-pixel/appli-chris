@@ -1,0 +1,30 @@
+[
+  {
+    "id": "track-001",
+    "title": "Morning Calm",
+    "artist": "Example Artist",
+    "file": "audio/track-01.mp3",
+    "duration": null
+  },
+  {
+    "id": "track-002",
+    "title": "Afternoon Drift",
+    "artist": "Example Artist",
+    "file": "audio/track-02.mp3",
+    "duration": null
+  },
+  {
+    "id": "track-003",
+    "title": "Evening Still",
+    "artist": "Example Artist",
+    "file": "audio/track-03.mp3",
+    "duration": null
+  },
+  {
+    "id": "track-004",
+    "title": "Night Echo",
+    "artist": "Example Artist",
+    "file": "audio/track-04.mp3",
+    "duration": null
+  }
+]
