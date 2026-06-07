@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "PowerShell(Move-Item *)",
-      "PowerShell(Get-ChildItem -Recurse \"C:\\\\Users\\\\Vanessa\\\\appli-chris\" | Where-Object { -not $_.PSIsContainer } | Select-Object FullName)"
+      "PowerShell(Get-ChildItem -Recurse \"C:\\\\Users\\\\Vanessa\\\\appli-chris\" | Where-Object { -not $_.PSIsContainer } | Select-Object FullName)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ]
   }
 }
